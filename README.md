@@ -33,5 +33,5 @@ pip install -e .
 
 ```
 cd examples/
-python3 run_lola.py
+python3 run_mbv2.py
 ```

@@ -187,6 +187,14 @@ class Mish(Chebyshev):
         return x * torch.tanh(F.softplus(x))
     
 
+class ReLU6(Chebyshev):
+    def __init__(self, degree=31):
+        super().__init__(degree, self.fn) 
+        
+    def fn(self, x):
+        return torch.clamp(x, 0, 6)
+    
+
 class _Sign(Module):
     def __init__(
         self, 
