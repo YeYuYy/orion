@@ -105,6 +105,23 @@ class CipherTensor:
         ptxt = self.decrypt()
         return str(ptxt.decode())
     
+    def __getitem__(self, idx):
+        if self.shape[0] != len(self.ids):
+            raise ValueError("Indexing is only supported for CipherTensors "
+                             "encrypted along the first dimension.")
+        if isinstance(idx, int):
+            if idx < 0 or idx >= len(self.ids):
+                raise IndexError("Index out of range.")
+            return CipherTensor(
+                self.scheme, self.ids[idx:idx+1], self.shape[1:], self.on_shape[1:])
+        elif isinstance(idx, slice):
+            sliced_ids = self.ids[idx]
+            new_shape = (len(sliced_ids),) + self.shape[1:]
+            new_on_shape = (len(sliced_ids),) + self.on_shape[1:]
+            return CipherTensor(self.scheme, sliced_ids, new_shape, new_on_shape)
+        else:
+            raise TypeError("Index must be an integer or a slice.")
+    
     #--------------#
     #  Operations  #
     #--------------#

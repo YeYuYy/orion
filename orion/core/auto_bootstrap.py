@@ -78,9 +78,9 @@ class BootstrapSolver:
                 path_dag.add_edges_from(edges_in_path)
 
                 # And create the level DAG based on the path.
-                aggregate_level_dag += LevelDAG(
+                aggregate_level_dag = LevelDAG(
                     self.l_eff, self.network_dag, path_dag
-                )
+                ) + aggregate_level_dag
 
             self.network_dag.solved_residual_level_dags[fork] = aggregate_level_dag
 

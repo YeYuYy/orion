@@ -11,23 +11,25 @@ class Fuser:
         self.network_dag = network_dag
 
     def _fuse_linear_chebyshev(self, linear, cheb):
-        linear.on_weight = linear.on_weight * cheb.prescale
-        linear.on_bias = linear.on_bias * cheb.prescale + cheb.constant
-        
-        cheb.fused = True
-        cheb.depth -= 1 # The prescale no longer consumes a level
+        if cheb.prescale != 1:
+            linear.on_weight = linear.on_weight * cheb.prescale
+            linear.on_bias = linear.on_bias * cheb.prescale + cheb.constant
+            
+            cheb.fused = True
+            cheb.depth -= 1 # The prescale no longer consumes a level
 
     def _fuse_bn_chebyshev(self, bn, cheb):
-        if bn.affine:
-            bn.on_weight = bn.on_weight * cheb.prescale
-            bn.on_bias = bn.on_bias * cheb.prescale + cheb.constant
-        else:
-            bn.affine = True 
-            bn.on_weight = torch.ones(bn.num_features) * cheb.prescale
-            bn.on_bias = torch.ones(bn.num_features) * cheb.constant
+        if cheb.prescale != 1:
+            if bn.affine:
+                bn.on_weight = bn.on_weight * cheb.prescale
+                bn.on_bias = bn.on_bias * cheb.prescale + cheb.constant
+            else:
+                bn.affine = True 
+                bn.on_weight = torch.ones(bn.num_features) * cheb.prescale
+                bn.on_bias = torch.ones(bn.num_features) * cheb.constant
 
-        cheb.fused = True
-        cheb.depth -= 1
+            cheb.fused = True
+            cheb.depth -= 1
 
     def _fuse_linear_bn(self, linear, bn):
         on_inv_running_std = 1 / torch.sqrt(bn.on_running_var + bn.eps) 

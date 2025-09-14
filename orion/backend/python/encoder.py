@@ -11,7 +11,7 @@ class NewEncoder:
     def setup_encoder(self):
         self.backend.NewEncoder()
 
-    def encode(self, values, level=None, scale=None):
+    def encode(self, values, level=None, scale=None, batch=False):
         if isinstance(values, list):
             values = torch.tensor(values)
         elif not isinstance(values, torch.Tensor):
@@ -28,10 +28,23 @@ class NewEncoder:
         num_elements = values.numel()
 
         values = values.cpu()
-        pad_length = (-num_elements) % num_slots
-        vector = torch.zeros(num_elements + pad_length)
-        vector[:num_elements] = values.flatten()
-        num_plaintexts = len(vector) // num_slots
+        if batch:
+            values = values.unbind(0)
+            if values[0].numel() > num_slots:
+                raise ValueError(f"Each element in the batch must have at most "
+                                 f"{num_slots} elements, but got "
+                                 f"{values[0].numel()}.")
+            vector = torch.zeros(len(values) * num_slots)
+            for i, v in enumerate(values):
+                v = torch.flatten(v)
+                vector[i*num_slots:i*num_slots+v.size(0)] = v
+            num_plaintexts = len(values)
+            values = torch.stack(values)
+        else:
+            pad_length = (-num_elements) % num_slots
+            vector = torch.zeros(num_elements + pad_length)
+            vector[:num_elements] = values.flatten()
+            num_plaintexts = len(vector) // num_slots
 
         plaintext_ids = []
         for i in range(num_plaintexts):

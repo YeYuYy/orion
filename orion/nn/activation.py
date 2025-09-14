@@ -193,6 +193,16 @@ class ReLU6(Chebyshev):
         
     def fn(self, x):
         return torch.clamp(x, 0, 6)
+
+
+class Tanh(Chebyshev):
+    def __init__(self, degree=31):
+        super().__init__(degree, self.fn) 
+        self.input_min = torch.tensor(-1.0)
+        self.input_max = torch.tensor(1.0)
+        
+    def fn(self, x):
+        return torch.tanh(x)
     
 
 class _Sign(Module):

@@ -9,7 +9,7 @@ from orion.nn.linear import LinearTransform
 class LevelDAG(nx.DiGraph):
     """
     The level digraph implementation from Section 5.2 of Orion:
-    https://arxiv.org/pdf/2311.03470. It your goal is to understand this
+    https://arxiv.org/pdf/2311.03470. If your goal is to understand this
     code, it may be useful to have the paper beside you for reference.
     The goal of this class is to determine the levels of all layers
     and locations of bootstrap operations in a given neural network.
@@ -20,7 +20,6 @@ class LevelDAG(nx.DiGraph):
         self.l_eff = l_eff
         self.network_dag = network_dag
         self.path = path
-        self.network_dag
         self.build_level_dag_from_path()
 
     def __add__(self, other):

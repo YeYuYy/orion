@@ -58,8 +58,12 @@ class NetworkDAG(nx.DiGraph):
                 # For each child of the node, get a path from that child to the 
                 # last node in the network.
                 for source in successors:
-                    path = nx.shortest_path(self, source, topo[-1])
-                    paths.append(set(path))
+                    # path = nx.shortest_path(self, source, topo[-1])
+                    path = nx.all_simple_paths(self, source, topo[-1])
+                    all_nodes_in_path = set()
+                    for p in path:
+                        all_nodes_in_path |= set(p)
+                    paths.append(all_nodes_in_path)
 
                 # By set intersecting all paths from child -> end, we can find 
                 # nodes common between all paths.

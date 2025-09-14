@@ -139,6 +139,11 @@ class StatsTracker(fx.Interpreter):
             if isinstance(e, torch.Tensor):
                 min_values.append(e.detach().min())
                 max_values.append(e.detach().max())
+            elif isinstance(e, (list, tuple)):
+                for t in e:
+                    if isinstance(t, torch.Tensor):
+                        min_values.append(t.detach().min())
+                        max_values.append(t.detach().max())
             else: # scalars
                 scalar_tensor = torch.tensor(e)
                 min_values.append(scalar_tensor)
@@ -161,8 +166,18 @@ class StatsTracker(fx.Interpreter):
 
     def update_output_stats(self, result: torch.Tensor, node: fx.Node):
         # Update output statistics based on actual result tensor
-        node.output_min = min(node.output_min, result.min())
-        node.output_max = max(node.output_max, result.max())
+        if isinstance(result, torch.Tensor):
+            node.output_min = min(node.output_min, result.min())
+            node.output_max = max(node.output_max, result.max())
+        elif isinstance(result, (list, tuple)):
+            for t in result:
+                if isinstance(t, torch.Tensor):
+                    node.output_min = min(node.output_min, t.min())
+                    node.output_max = max(node.output_max, t.max())
+        else: # scalars
+            scalar_tensor = torch.tensor(result)
+            node.output_min = min(node.output_min, scalar_tensor.min())
+            node.output_max = max(node.output_max, scalar_tensor.max())
         
         # Determine appropriate output shape based on module type
         node.output_shape = self.compute_clear_output_shape(node, result)
@@ -179,6 +194,9 @@ class StatsTracker(fx.Interpreter):
             module = self.module.get_submodule(node.target)
             if isinstance(module, LinearTransform):
                 return result.shape
+        # Special case for indexing operations
+        if "getitem" in node.name:
+            return result.shape
                 
         # For all other modules, preserve the input shape
         return node.input_shape

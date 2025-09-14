@@ -100,9 +100,9 @@ class Scheme:
                 f"further notice."
             )
 
-    def encode(self, tensor, level=None, scale=None):
+    def encode(self, tensor, level=None, scale=None, batch=False):
         self._check_initialization()
-        return self.encoder.encode(tensor, level, scale)
+        return self.encoder.encode(tensor, level, scale, batch)
 
     def decode(self, ptxt):
         self._check_initialization() 
