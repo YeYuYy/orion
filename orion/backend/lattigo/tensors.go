@@ -41,6 +41,14 @@ func DeleteCiphertext(ciphertextID C.int) {
 	ctHeap.Delete(int(ciphertextID))
 }
 
+//export CloneCiphertext
+func CloneCiphertext(ciphertextID C.int) C.int {
+	ciphertext := RetrieveCiphertext(int(ciphertextID))
+	cloned := ciphertext.CopyNew()
+	newId := PushCiphertext(cloned)
+	return C.int(newId)
+}
+
 //export GetPlaintextScale
 func GetPlaintextScale(plaintextID C.int) C.ulong {
 	plaintext := RetrievePlaintext(int(plaintextID))

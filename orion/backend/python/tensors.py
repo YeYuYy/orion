@@ -1,5 +1,6 @@
 import sys
 import math
+import torch
 
 class PlainTensor:
     def __init__(self, scheme, ptxt_ids, shape, on_shape=None):
@@ -223,6 +224,26 @@ class CipherTensor:
             rot_ids.append(rot_id)
 
         return CipherTensor(self.scheme, rot_ids, self.shape, self.on_shape)
+    
+    def cat(self, other, dim=1):
+        if isinstance(other, CipherTensor):
+            for i, (shape1, shape2) in enumerate(
+                zip(self.on_shape, other.on_shape)):
+                if i == dim: continue
+                if shape1 != shape2:
+                    raise ValueError(f"Dimension {i} mismatch: "
+                                     f"({shape1}, {shape2}).")
+            for id in other.ids:
+                self.ids.append(self.backend.CloneCiphertext(id))
+            self.shape, self.on_shape = list(self.shape), list(self.on_shape)
+            self.shape[dim] += other.shape[dim]
+            self.on_shape[dim] += other.on_shape[dim]
+            self.shape, self.on_shape = (
+                torch.Size(self.shape), torch.Size(self.on_shape))
+        else:
+            raise TypeError("Concatenation is only supported between"
+                            "ciphertensors.")
+        return
     
     def _check_valid(self, other):
         return

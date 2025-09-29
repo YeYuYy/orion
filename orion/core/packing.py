@@ -130,7 +130,19 @@ def _packing_panel(
 #   Packing Logic   #
 #-------------------#
 
-def pack_conv2d(conv_layer: nn.Module, last: bool):
+def pack_conv2d(conv_layer: nn.Module, last: bool, transpose: bool):
+    # We swap input features with output features in advance to obtain
+    # a correct transposed toeplitz matrix for transposed convolution.
+    def swap():
+        conv_layer.in_channels, conv_layer.out_channels = (
+            conv_layer.out_channels, conv_layer.in_channels)
+        conv_layer.input_gap, conv_layer.output_gap = (
+            conv_layer.output_gap, conv_layer.input_gap)
+        conv_layer.input_shape, conv_layer.output_shape = (
+            conv_layer.output_shape, conv_layer.input_shape)
+        conv_layer.fhe_input_shape, conv_layer.fhe_output_shape = (
+            conv_layer.fhe_output_shape, conv_layer.fhe_input_shape)
+
     slots = conv_layer.scheme.params.get_slots()
     embed_method = conv_layer.scheme.params.get_embedding_method()
 
@@ -138,7 +150,9 @@ def pack_conv2d(conv_layer: nn.Module, last: bool):
     if conv_layer.groups > 1:
         weight = resolve_grouped_conv(conv_layer)
 
+    if transpose: swap()
     toeplitz = construct_conv2d_toeplitz(conv_layer, weight)
+    if transpose: toeplitz = toeplitz.transpose(); swap()
     diagonals, output_rotations = diagonalize(
         toeplitz,
         slots,

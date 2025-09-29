@@ -226,7 +226,7 @@ class Conv2d(LinearTransform):
     def generate_diagonals(self, last):
         # Generate Toeplitz diagonals and determine the number of output
         # rotations if the `hybrid` packing method is used.
-        self.diagonals, self.output_rotations = packing.pack_conv2d(self, last)
+        self.diagonals, self.output_rotations = packing.pack_conv2d(self, last, False)
         if self.get_io_mode() == "save":
             self.save_transforms()
 
@@ -258,3 +258,66 @@ class Conv2d(LinearTransform):
             )
         
         return self.evaluate_transforms(x) # FHE mode
+    
+
+class ConvTranspose2d(Conv2d):
+    def __init__(self,
+                 in_channels, 
+                 out_channels, 
+                 kernel_size, 
+                 stride = 1, 
+                 padding = 0, 
+                 output_padding = 0,
+                 dilation = 1, 
+                 groups = 1, 
+                 bias = True, 
+                 bsgs_ratio = 2, 
+                 level = None):
+        super().__init__(in_channels, 
+                         out_channels, 
+                         kernel_size, 
+                         stride, 
+                         padding, 
+                         dilation, 
+                         groups, 
+                         bias, 
+                         bsgs_ratio, 
+                         level)
+        self.output_padding = output_padding
+        self.weight = nn.Parameter(
+            torch.empty(in_channels, out_channels // groups, *self.kernel_size)
+        )
+        self.reset_parameters()
+    
+    def compute_fhe_output_gap(self, **kwargs):
+        # Oppositely, strided transposed convolutions require the
+        # multiplexed gap to have been increased by a factor of the stride
+        # beforehand. This condition is naturally satisfied in UNet. To
+        # thoroughly generalize this operation, a general permutation is 
+        # required.
+        input_gap = kwargs['input_gap']
+        if input_gap % self.stride[0] != 0:
+            raise ValueError("The input layout is not compatible with"
+                             "transposed convolution.")
+        return input_gap // self.stride[0]
+    
+    def generate_diagonals(self, last):
+        self.diagonals, self.output_rotations = packing.pack_conv2d(self, last, True)
+        if self.get_io_mode() == "save":
+            self.save_transforms()
+    
+    def forward(self, x):
+        if not self.he_mode:
+            if x.dim() != 4:
+                raise ValueError(
+                    f"Expected input to {self.__class__.__name__} to have "
+                    f" 4 dimensions (N, C, H, W), but got {x.dim()} "
+                    f"dimension(s): {x.shape}."
+                )
+            return torch.nn.functional.conv_transpose2d(
+                x, self.weight, self.bias, self.stride, self.padding,
+                self.output_padding, self.groups, self.dilation
+            )
+        
+        return self.evaluate_transforms(x)
+    

@@ -191,6 +191,12 @@ class LattigoLibrary:
             restype=None
         )
 
+        self.CloneCiphertext = LattigoFunction(
+            self.lib.CloneCiphertext, 
+            argtypes=[ctypes.c_int], 
+            restype=ctypes.c_int
+        )
+
         self.GetPlaintextScale = LattigoFunction(
             self.lib.GetPlaintextScale,
             argtypes=[ctypes.c_int],

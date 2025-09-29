@@ -33,7 +33,39 @@ class Mult(Module):
 
     def forward(self, x, y):
         return x * y
+
+
+class Cat(Module):
+    def __init__(self):
+        super().__init__()
+        self.set_depth(0)
+
+    def compute_fhe_output_shape(self, **kwargs):
+        input_shape = kwargs["input_shape"]
+        clear_output_shape = kwargs["clear_output_shape"]
+        fhe_input_shape = kwargs["fhe_input_shape"]
+        
+        for i in range(len(input_shape[0])):
+            if input_shape[0][i] != clear_output_shape[i]: dim = i; break
+        fhe_output_shape = list(fhe_input_shape[0])
+        for shape in fhe_input_shape[1:]:
+            fhe_output_shape[dim] += shape[dim]
+
+        return torch.Size(fhe_output_shape)
     
+    def forward(self, x_list, dim=0):
+        # Current FHE concat only supports the limited trivial cases where
+        # dim happens to be the outermost packing dimension and there is no
+        # the length of dim can be divided by the number of tiles in one ct.
+        # For example, in UNet, concats not along C or without
+        # floor(N / H * W) | C would be erroneous.
+        if self.he_mode:
+            out = x_list[0]
+            for x in x_list[1:]:
+                out.cat(x, dim=dim)
+            return out
+        else: return torch.cat(x_list, dim=dim)
+
 
 class Bootstrap(Module):
     def __init__(self, input_min, input_max, input_level):
