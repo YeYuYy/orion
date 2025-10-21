@@ -151,6 +151,122 @@ class Linear(LinearTransform):
         return self.evaluate_transforms(x) 
 
 
+# 0 means no change
+# gWgH(C/g^2) <-> WHC <-> CHW
+# permute: not applicable on gap>1, will narrow gap first
+# assume input has been padded?
+# users should make sure the dimensions are in correct order when gap > 1.
+class Permutation(LinearTransform):
+    def __init__(
+        self, 
+        permute: list,
+        bsgs_ratio: int = 2,
+        level: int = None,
+        target_gap: int = 0,
+    ) -> None:
+        super().__init__(bsgs_ratio, level)
+
+        self.permute = permute
+        self.target_gap = target_gap
+        self.permute_ready = True
+        self._check_permutation()
+        if self._no_permutation() and target_gap == 0:
+            self.set_depth(0)
+
+    def extra_repr(self):
+        return (f"permute={self.permute}, target_gap={self.target_gap}, " + 
+                super().extra_repr())
+    
+    def init_orion_params(self):
+        pass
+
+    def _check_permutation(self):
+        if self.permute is None:
+            self.permute_ready = False
+            return
+        if sorted(self.permute) != list(range(len(self.permute))):
+            raise ValueError("Illegal permutation.")
+        if self.permute[0] > 0:
+            raise Warning("Permutation changes batch dim. This is likely to cause errors\
+                          because Orion assumes batch to be the first dim during tracing.")
+
+    def _no_permutation(self):
+        if not self.permute_ready:
+            return False
+        return self.permute == list(range(len(self.permute)))
+    
+    def set_permutation(self, permute: list):
+        self.permute = permute
+        self._check_permutation()
+        if self._no_permutation() and self.target_gap == 0:
+            self.set_depth(0)
+    
+    def set_gap(self, target_gap: int):
+        self.target_gap = target_gap
+        if self._no_permutation() and self.target_gap == 0:
+            self.set_depth(0)
+    
+    def compute_fhe_output_gap(self, **kwargs):
+        if self.target_gap == 0:
+            if 'input_gap' in kwargs:
+                self.input_gap = kwargs['input_gap']
+                return self.input_gap
+            else: return 1
+        else: return self.target_gap
+        
+    def compute_fhe_output_shape(self, **kwargs) -> tuple:
+        fhe_input_shape = kwargs['fhe_input_shape']
+        clear_output_shape = kwargs['clear_output_shape']
+        input_gap = kwargs['input_gap']
+        output_gap = self.compute_fhe_output_gap(input_gap=kwargs['input_gap'])
+        if self.permute_ready is False:
+            raise ValueError("Permutation not properly initialized.")
+
+        if input_gap > 1:
+            N, Ci, Hi, Wi = fhe_input_shape
+            Co = math.ceil(Ci * input_gap**2 / (output_gap**2))
+            Ho = math.ceil(Hi / input_gap) * output_gap
+            Wo = math.ceil(Wi / input_gap) * output_gap
+            shape = (N, Co, Ho, Wo)
+            fhe_output_shape = torch.Size([shape[i] for i in self.permute])
+        elif output_gap > 1:
+            N, Co, Ho, Wo = clear_output_shape
+            Ci = math.ceil(Co / output_gap**2)
+            Hi = Ho * output_gap
+            Wi = Wo * output_gap
+            fhe_output_shape = torch.Size([N, Ci, Hi, Wi])
+        else: fhe_output_shape = clear_output_shape
+
+        return fhe_output_shape
+
+    def generate_diagonals(self, last):
+        self.diagonals, self.output_rotations = packing.pack_permutation(self, last)
+        if self.get_io_mode() == "save":
+            self.save_transforms()
+
+    def compile(self):
+        if self.get_io_mode() != "none":
+            self.diagonals, self.on_bias, self.output_rotations = self.load_transforms()
+        self.transform_ids = self.scheme.lt_evaluator.generate_transforms(self)
+
+    @timer
+    def evaluate_transforms(self, x):
+        out = self.scheme.lt_evaluator.evaluate_transforms(self, x)
+        slots = self.scheme.params.get_slots()
+        for i in range(1, self.output_rotations+1):
+            out += out.roll(slots // (2**i))
+            
+        return out
+        
+    def forward(self, x):
+        if not self.he_mode:
+            return x.permute(self.permute)
+        else:
+            if self.depth == 1:
+                return self.evaluate_transforms(x)
+            else: return x
+
+
 class Conv2d(LinearTransform):    
     def __init__(
             self, 
@@ -292,13 +408,12 @@ class ConvTranspose2d(Conv2d):
     def compute_fhe_output_gap(self, **kwargs):
         # Oppositely, strided transposed convolutions require the
         # multiplexed gap to have been increased by a factor of the stride
-        # beforehand. This condition is naturally satisfied in UNet. To
-        # thoroughly generalize this operation, a general permutation is 
-        # required.
+        # beforehand. This condition is naturally satisfied in UNet.
+        # If not, one can insert a permutation layer to expand the gap first.
         input_gap = kwargs['input_gap']
         if input_gap % self.stride[0] != 0:
-            raise ValueError("The input layout is not compatible with"
-                             "transposed convolution.")
+            raise ValueError("Input gap not compatible with ConvTranspose2d stride. \
+                              Consider using Permutation in advance.")
         return input_gap // self.stride[0]
     
     def generate_diagonals(self, last):

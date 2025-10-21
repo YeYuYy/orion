@@ -7,3 +7,4 @@ from .yolo import *
 from .mlp import *
 from .mobilenet import * 
 from .unet import *
+from .perm import *

@@ -2,6 +2,7 @@ import math
 import torch
 
 from .module import Module, timer
+from .linear import Permutation
 
 class Add(Module):
     def __init__(self):
@@ -35,6 +36,11 @@ class Mult(Module):
         return x * y
 
 
+# With permutation implemented, we can concatenate along any dim.
+# However, as the number of input tensors is not specified at compile
+# time, we can only concat tensors of the same shape when dim != 0.
+# For more general cases, users should insert permutation layers before
+# concatenation to move the concat dim to front.
 class Cat(Module):
     def __init__(self):
         super().__init__()
@@ -54,11 +60,6 @@ class Cat(Module):
         return torch.Size(fhe_output_shape)
     
     def forward(self, x_list, dim=0):
-        # Current FHE concat only supports the limited trivial cases where
-        # dim happens to be the outermost packing dimension and there is no
-        # the length of dim can be divided by the number of tiles in one ct.
-        # For example, in UNet, concats not along C or without
-        # floor(N / H * W) | C would be erroneous.
         if self.he_mode:
             out = x_list[0]
             for x in x_list[1:]:

@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import scipy.sparse as sp
 import matplotlib.pyplot as plt
+from itertools import product
 
 # tqdm not used; Rich progress is used for packing visualization
 
@@ -209,11 +210,11 @@ def construct_conv2d_toeplitz(conv_layer, weight):
     kernel = torch.zeros(on_Co * oG**2, on_Ci * iG**2, kW, kH) 
     kernel[:weight.shape[0], :weight.shape[1], ...] = weight
 
-    # All the indices the kernel initially touches
+    # All the in_indices the kernel initially touches
     initial_kernel_position = compute_first_kernel_position()
 
     # Create our row-interchange map that dictates how we permute rows for 
-    # optimal packing. Also return all indices that the first top-left filter 
+    # optimal packing. Also return all in_indices that the first top-left filter 
     # value touches throughout the convolution.
     row_map = compute_row_interchange_map()
     corner_indices = valid_image_indices[0, 0:(Ho*oG):oG, 0:(Wo*oG):oG].flatten() 
@@ -297,6 +298,85 @@ def construct_linear_bias(linear_layer):
     N = linear_layer.input_shape[0]
     return linear_layer.on_bias.repeat(N)
 
+def pack_permutation(perm_layer: nn.Module, last: bool):
+    slots = perm_layer.scheme.params.get_slots()
+    embed_method = perm_layer.scheme.params.get_embedding_method()
+
+    weight = construct_perm_matrix(perm_layer)
+    diagonals, output_rotations = diagonalize(
+        weight,
+        slots,
+        embed_method,
+        last,
+        debug=perm_layer.scheme.params.get_debug_status(),
+        layer_name=getattr(perm_layer, "name", "Permutation"),
+    )
+    return diagonals, output_rotations
+
+def construct_perm_matrix(perm_layer):
+    permute = perm_layer.permute
+    fhe_input_shape = perm_layer.fhe_input_shape
+    fhe_out_shape = perm_layer.fhe_output_shape
+
+    if hasattr(perm_layer, "input_gap") and perm_layer.input_gap > 1:
+        if len(fhe_input_shape) != 4:
+            raise ValueError("Gaps only exist in tensors with shape (N, C, H, W)")
+        input_gap = perm_layer.input_gap
+        N, C, H, W = fhe_input_shape
+        input_shape_w_gap = [N, C, math.ceil(H / input_gap), input_gap, math.ceil(W / input_gap), input_gap]
+    else: input_shape_w_gap = fhe_input_shape
+    if hasattr(perm_layer, "output_gap") and perm_layer.output_gap > 1:
+        if len(fhe_out_shape) != 4:
+            raise ValueError("Gaps only exist in tensors with shape (N, C, H, W)")
+        output_gap = perm_layer.output_gap
+        N, C, H, W = fhe_out_shape
+        output_shape_w_gap = [N, C, math.ceil(H / output_gap), output_gap, math.ceil(W / output_gap), output_gap]
+    else: output_shape_w_gap = fhe_out_shape
+
+    def index_1d(shape, in_indices):
+        idx_1d = 0
+        step = 1
+        for dim, idx in zip(reversed(shape), reversed(in_indices)):
+            idx_1d += step * idx
+            step *= dim
+        return idx_1d
+
+    matrix = torch.zeros(math.prod(output_shape_w_gap), math.prod(input_shape_w_gap))
+    for in_indices in product(*(range(d) for d in input_shape_w_gap)):
+        if hasattr(perm_layer, "input_gap") and perm_layer.input_gap > 1:
+            if hasattr(perm_layer, "output_gap") and perm_layer.output_gap > 1:
+                # There should be no permutation.
+                C_idx_1d = index_1d([input_shape_w_gap[i] for i in [1, 3, 5]], [in_indices[i] for i in [1, 3, 5]])
+                out_indices = list(in_indices)
+                out_indices[5], C_idx_1d = C_idx_1d % output_gap, C_idx_1d // output_gap
+                out_indices[3], C_idx_1d = C_idx_1d % output_gap, C_idx_1d // output_gap
+                out_indices[1] = C_idx_1d
+            else:
+                # First set the gap to 1, and then permute.
+                C_idx_1d = index_1d([input_shape_w_gap[i] for i in [1, 3, 5]], [in_indices[i] for i in [1, 3, 5]])
+                tmp_indices = [in_indices[0], C_idx_1d, in_indices[2], in_indices[4]]
+                out_indices = [tmp_indices[permute[i]] for i in range(4)]
+        else:
+            if hasattr(perm_layer, "output_gap") and perm_layer.output_gap > 1:
+                # First permute, and then set the gap to the desired value.
+                tmp_indices = [in_indices[permute[i]] for i in range(4)]  # should be N, C, H, W
+                out_indices = [tmp_indices[0], 0, tmp_indices[2], 0, tmp_indices[3], 0]
+                C_idx_1d = tmp_indices[1]
+                out_indices[5], C_idx_1d = C_idx_1d % output_gap, C_idx_1d // output_gap
+                out_indices[3], C_idx_1d = C_idx_1d % output_gap, C_idx_1d // output_gap
+                out_indices[1] = C_idx_1d
+            else:
+                # Simple permutation.
+                out_indices = [in_indices[permute[i]] for i in range(len(permute))]
+
+        in_idx_1d = index_1d(input_shape_w_gap, in_indices)
+        out_idx_1d = index_1d(output_shape_w_gap, out_indices)
+        matrix[out_idx_1d, in_idx_1d] = 1.0
+
+    matrix_sparse = sp.csr_matrix(matrix.cpu().numpy())
+    return matrix_sparse
+
+
 #-----------------------------#
 #       Helper Functions      #
 #-----------------------------#
@@ -337,7 +417,7 @@ def diagonalize(
     For each (slots, slots) block of the input matrix, this function 
     extracts the generalized diagonals and stores them in a dictionary. 
     Each key ((i,j)) in the dictionary block_{i,j}, and the value is 
-    another dictionary mapping diagonal indices to their values.
+    another dictionary mapping diagonal in_indices to their values.
 
     Args:
         matrix (scipy.sparse.csr_matrix): A 4D tensor representing a weight matrix 
@@ -349,7 +429,7 @@ def diagonalize(
     Returns:
         dict: A dictionary where each key is a tuple (i, j) corresponding 
               to the (i, j)th (slots, slots) block of `matrix`. The value 
-              for each key is another dictionary that maps diagonal indices 
+              for each key is another dictionary that maps diagonal in_indices 
               within the block to the diagonal's tensor values.
 
     Examples:
@@ -391,7 +471,7 @@ def diagonalize(
     # Inflate dimensions of the sparse matrix
     matrix.resize(num_block_rows * block_height, num_block_cols * num_slots)
 
-    # Prepare indices for diagonal extraction 
+    # Prepare in_indices for diagonal extraction 
     row_idx = torch.arange(block_height).repeat(num_slots // block_height)
     col_idx = torch.arange(block_height)[:, None] + torch.arange(num_slots)[None, :]
     col_idx = torch.where(col_idx >= num_slots, col_idx - num_slots, col_idx)

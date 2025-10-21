@@ -233,8 +233,11 @@ class CipherTensor:
                 if shape1 != shape2:
                     raise ValueError(f"Dimension {i} mismatch: "
                                      f"({shape1}, {shape2}).")
-            for id in other.ids:
-                self.ids.append(self.backend.CloneCiphertext(id))
+            if self.shape.numel() + other.shape.numel() > self.slots():
+                for id in other.ids:
+                    self.ids.append(self.backend.CloneCiphertext(id))
+            else:
+                self += other.roll(self.slots() - self.shape.numel(), in_place=True)
             self.shape, self.on_shape = list(self.shape), list(self.on_shape)
             self.shape[dim] += other.shape[dim]
             self.on_shape[dim] += other.on_shape[dim]
