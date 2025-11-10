@@ -18,6 +18,8 @@ torch.manual_seed(42)
 # Decide which UNet model to use
 argparser = argparse.ArgumentParser(description='Run UNet FHE inference')
 argparser.add_argument('--network', type=str, default='small', help='UNet model to use: small, base or large')
+argparser.add_argument('--upsample', type=str, default='bilinear', 
+                       help='Upsampling layer to use: bilinear interpolation or transposed convolution')
 args = argparser.parse_args()
 
 # Initialize the Orion scheme, model, and data
@@ -25,11 +27,11 @@ scheme = orion.init_scheme("../configs/resnet.yml")
 trainloader, testloader = get_cifar_datasets(data_dir="../data", batch_size=1)
 
 if args.network == 'small':
-    net = models.UNet_small()
+    net = models.UNet_small(args.upsample)
 elif args.network == 'base':
-    net = models.UNet_base()
+    net = models.UNet_base(args.upsample)
 elif args.network == 'large':
-    net = models.UNet_large()
+    net = models.UNet_large(args.upsample)
 else:
     raise ValueError("Invalid network choice. Choose from: small, base, large.")
 

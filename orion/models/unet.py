@@ -44,6 +44,8 @@ class UpBlock(on.Module):
             self.up = on.BilinearConv2d(in_channels, in_channels // 2, kernel_size=3, stride=2, padding=1)
         elif upsample == "transconv":
             self.up = on.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+        else:
+            raise ValueError("Please specify a legal upsampling layer from 'bilinear' and 'transconv'.")
         self.conv = DoubleConv(in_channels, out_channels)
         self.cat = on.Cat()
 
@@ -97,16 +99,16 @@ class UNet(on.Module):
         return x
 
 
-def UNet_small():
-    return UNet(features=[32, 64, 128, 256])
+def UNet_small(upsample):
+    return UNet(features=[32, 64, 128, 256], upsample=upsample)
 
 
-def UNet_base():
-    return UNet(features=[64, 128, 256, 512])
+def UNet_base(upsample):
+    return UNet(features=[64, 128, 256, 512], upsample=upsample)
 
 
-def UNet_large():
-    return UNet(features=[96, 192, 384, 768])
+def UNet_large(upsample):
+    return UNet(features=[96, 192, 384, 768], upsample=upsample)
 
 
 def test():
