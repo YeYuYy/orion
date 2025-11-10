@@ -4,6 +4,7 @@ import time
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import scipy.sparse as sp
 import matplotlib.pyplot as plt
 from itertools import product
@@ -376,6 +377,57 @@ def construct_perm_matrix(perm_layer):
     matrix_sparse = sp.csr_matrix(matrix.cpu().numpy())
     return matrix_sparse
 
+def pack_bilinear_conv(bc_layer: nn.Module, last: bool):
+    slots = bc_layer.scheme.params.get_slots()
+    embed_method = bc_layer.scheme.params.get_embedding_method()
+    weight = bc_layer.on_weight
+    if bc_layer.groups > 1:
+        weight = resolve_grouped_conv(bc_layer)
+
+    weight_bilinear = construct_bilinear_toeplitz(bc_layer)
+    bc_layer.input_gap //= bc_layer.stride[0] # use the input shape of conv to avoid potential error
+    N, Ci, Hi, Wi = bc_layer.fhe_input_shape
+    bc_layer.fhe_input_shape = torch.Size([N, int(Ci * bc_layer.stride[0] ** 2), Hi, Wi])
+    weight_conv = construct_conv2d_toeplitz(bc_layer, weight)
+    bc_layer.input_gap *= bc_layer.stride[0]
+    bc_layer.fhe_input_shape = torch.Size([N, Ci, Hi, Wi])
+    weight = weight_conv @ weight_bilinear
+
+    diagonals, output_rotations = diagonalize(
+        weight,
+        slots,
+        embed_method,
+        last,
+        debug=bc_layer.scheme.params.get_debug_status(),
+        layer_name=getattr(bc_layer, "name", "BilinearConv"),
+    )
+    return diagonals, output_rotations
+
+def construct_bilinear_toeplitz(bc_layer):
+    N, on_Ci, on_H, on_W = bc_layer.fhe_input_shape
+    iG = bc_layer.input_gap 
+    oG = bc_layer.output_gap
+    on_Co = on_Ci * (iG / oG) ** 2
+
+    def reverse_index(idx, gap):
+        W, H = on_W / gap, on_H / gap
+        w = (idx // gap) % W
+        h = (((idx // gap) // W) // gap) % H
+        return w, h
+
+    matrix = torch.zeros(on_H * on_W, on_H * on_W)
+    for i in range(on_H * on_W):
+        for j in range(on_H * on_W):
+            wo, ho = reverse_index(i, oG)
+            wi, hi = reverse_index(j, iG)
+            wi_map = wi * (on_W / oG - 1) / (on_W / iG - 1)
+            hi_map = hi * (on_H / oG - 1) / (on_H / iG - 1)
+            if (abs(wi_map - wo) < 1 and abs(hi_map - ho) < 1):
+                matrix[i, j] = (1 - abs(wi_map - wo)) * (1 - abs(hi_map - ho))
+
+    matrix_sparse = sp.csr_matrix(matrix.cpu().numpy())
+    matrix_sparse = sp.kron(np.ones((int(on_Co * N), int(on_Ci * N))), matrix_sparse, format="csr")
+    return matrix_sparse
 
 #-----------------------------#
 #       Helper Functions      #

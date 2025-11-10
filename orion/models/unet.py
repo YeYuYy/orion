@@ -38,9 +38,12 @@ class DownBlock(on.Module):
 
 
 class UpBlock(on.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, upsample="bilinear"):
         super(UpBlock, self).__init__()
-        self.up = on.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+        if upsample == "bilinear":
+            self.up = on.BilinearConv2d(in_channels, in_channels // 2, kernel_size=3, stride=2, padding=1)
+        elif upsample == "transconv":
+            self.up = on.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
         self.conv = DoubleConv(in_channels, out_channels)
         self.cat = on.Cat()
 
@@ -51,7 +54,7 @@ class UpBlock(on.Module):
 
 
 class UNet(on.Module):
-    def __init__(self, in_channels=3, num_classes=10, features=[64, 128, 256, 512]):
+    def __init__(self, in_channels=3, num_classes=10, features=[64, 128, 256, 512], upsample="bilinear"):
         super(UNet, self).__init__()
         self.downs = nn.ModuleList()
         self.ups = nn.ModuleList()

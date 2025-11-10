@@ -3,6 +3,7 @@ import math
 import torch
 import orion
 import orion.models as models
+import argparse
 from orion.core.utils import (
     get_cifar_datasets,
     mae, 
@@ -14,10 +15,23 @@ orion.set_log_level('INFO')
 # Set seed for reproducibility
 torch.manual_seed(42)
 
+# Decide which UNet model to use
+argparser = argparse.ArgumentParser(description='Run UNet FHE inference')
+argparser.add_argument('--network', type=str, default='small', help='UNet model to use: small, base or large')
+args = argparser.parse_args()
+
 # Initialize the Orion scheme, model, and data
 scheme = orion.init_scheme("../configs/resnet.yml")
 trainloader, testloader = get_cifar_datasets(data_dir="../data", batch_size=1)
-net = models.UNet_small()
+
+if args.network == 'small':
+    net = models.UNet_small()
+elif args.network == 'base':
+    net = models.UNet_base()
+elif args.network == 'large':
+    net = models.UNet_large()
+else:
+    raise ValueError("Invalid network choice. Choose from: small, base, large.")
 
 # Get a test batch to pass through our network
 inp, _ = next(iter(testloader))

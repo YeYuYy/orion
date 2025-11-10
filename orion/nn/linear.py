@@ -151,11 +151,6 @@ class Linear(LinearTransform):
         return self.evaluate_transforms(x) 
 
 
-# 0 means no change
-# gWgH(C/g^2) <-> WHC <-> CHW
-# permute: not applicable on gap>1, will narrow gap first
-# assume input has been padded?
-# users should make sure the dimensions are in correct order when gap > 1.
 class Permutation(LinearTransform):
     def __init__(
         self, 
@@ -432,6 +427,66 @@ class ConvTranspose2d(Conv2d):
             return torch.nn.functional.conv_transpose2d(
                 x, self.weight, self.bias, self.stride, self.padding,
                 self.output_padding, self.groups, self.dilation
+            )
+        
+        return self.evaluate_transforms(x)
+    
+
+class BilinearConv2d(Conv2d):
+    def __init__(self,
+                 in_channels, 
+                 out_channels, 
+                 kernel_size, 
+                 stride = 1, 
+                 padding = 0, 
+                 output_padding = 0,
+                 dilation = 1, 
+                 groups = 1, 
+                 bias = True, 
+                 bsgs_ratio = 2, 
+                 level = None):
+        super().__init__(in_channels, 
+                         out_channels, 
+                         kernel_size, 
+                         stride, 
+                         padding, 
+                         dilation, 
+                         groups, 
+                         bias, 
+                         bsgs_ratio, 
+                         level)
+        self.output_padding = output_padding
+        self.weight = nn.Parameter(
+            torch.empty(out_channels, in_channels // groups, *self.kernel_size)
+        )
+        self.reset_parameters()
+    
+    def compute_fhe_output_gap(self, **kwargs):
+        # Similarly, bilinear interpolations also require that the
+        # multiplexed gap have been increased by a factor of the stride.
+        input_gap = kwargs['input_gap']
+        if input_gap % self.stride[0] != 0:
+            raise ValueError("Input gap not compatible with BilinearConv2d stride. \
+                              Consider using Permutation in advance.")
+        return input_gap // self.stride[0]
+    
+    def generate_diagonals(self, last):
+        self.diagonals, self.output_rotations = packing.pack_bilinear_conv(self, last)
+        if self.get_io_mode() == "save":
+            self.save_transforms()
+    
+    def forward(self, x):
+        if not self.he_mode:
+            if x.dim() != 4:
+                raise ValueError(
+                    f"Expected input to {self.__class__.__name__} to have "
+                    f" 4 dimensions (N, C, H, W), but got {x.dim()} "
+                    f"dimension(s): {x.shape}."
+                )
+            y = torch.nn.functional.interpolate(x, scale_factor=self.stride, mode="bilinear", align_corners=True)
+            return torch.conv2d(
+                y, self.weight, self.bias, 1, 
+                self.padding, self.dilation, self.groups
             )
         
         return self.evaluate_transforms(x)
