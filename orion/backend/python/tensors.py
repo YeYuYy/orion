@@ -1,5 +1,6 @@
 import sys
 import math
+import copy
 import torch
 
 class PlainTensor:
@@ -224,6 +225,38 @@ class CipherTensor:
             rot_ids.append(rot_id)
 
         return CipherTensor(self.scheme, rot_ids, self.shape, self.on_shape)
+
+    # This function is expected to be used in pair with broadcast, so it does
+    # not change shape or on_shape for simplicity.
+    def summation(self, stride=1, group=1):
+        total_len = len(self.ids)
+        if total_len % group != 0:
+            raise ValueError(f"Input length ({total_len}) must be divisible by group ({group})")
+            
+        len_per_group = total_len // group
+        sum_ids = [0] * (stride * group) 
+        
+        for g in range(group):
+            input_offset = g * len_per_group
+            output_offset = g * stride
+            for i in range(len_per_group):
+                real_input_idx = input_offset + i
+                real_output_idx = output_offset + (i % stride)
+                if i < stride:
+                    sum_ids[real_output_idx] = self.ids[real_input_idx]
+                else:
+                    sum_ids[real_output_idx] = self.evaluator.add_ciphertext(
+                        sum_ids[real_output_idx], self.ids[real_input_idx], False
+                    )
+        
+        return CipherTensor(self.scheme, sum_ids, self.shape, self.on_shape)
+
+    def broadcast(self, times=1):
+        ids = copy.deepcopy(self.ids)
+        for _ in range(times - 1):
+            for id in ids:
+                self.ids.append(self.backend.CloneCiphertext(id))
+        return CipherTensor(self.scheme, self.ids, self.shape, self.on_shape)
     
     def cat(self, other, dim=1):
         if isinstance(other, CipherTensor):
@@ -294,3 +327,19 @@ class CipherTensor:
         
     def decrypt(self):
         return self.encryptor.decrypt(self)
+
+
+def new_plaintext(value, scheme, level=None, scale=None):
+    if isinstance(value, (int, float, complex)):
+        slots = scheme.params.get_slots()
+        vector = [value] * slots
+    elif isinstance(value, list):
+        vector = value
+    else:
+        raise(TypeError, "Value should be list, int, float or complex type.")
+    
+    return scheme.encode(vector, level=None, scale=None)
+
+def new_ciphertext(value, scheme, level=None, scale=None):
+    plaintext = new_plaintext(value, scheme, level, scale)
+    return scheme.encrypt(plaintext)

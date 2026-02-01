@@ -75,7 +75,8 @@ class UNet(on.Module):
 
         # Final classifier
         self.final_conv = on.Conv2d(features[0], num_classes, kernel_size=1)
-        self.avgpool = on.AdaptiveAvgPool2d((1, 1))
+        # self.avgpool = on.AdaptiveAvgPool2d((1, 1))
+        # self.argmax = on.Argmax()
 
     def forward(self, x):
         skip_connections = []
@@ -95,12 +96,14 @@ class UNet(on.Module):
 
         # Final classification
         x = self.final_conv(x)
-        x = self.avgpool(x)
+        # x = self.avgpool(x)
+        # x = self.argmax(x)
+
         return x
 
 
 def UNet_small(upsample):
-    return UNet(features=[32, 64, 128, 256], upsample=upsample)
+    return UNet(features=[4, 8, 16, 32], upsample=upsample)
 
 
 def UNet_base(upsample):

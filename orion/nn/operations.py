@@ -34,6 +34,58 @@ class Mult(Module):
 
     def forward(self, x, y):
         return x * y
+    
+# Summation along the given dimension. Current implementation is already
+# robust, nevertheless, it still has the following constraints on the input:
+# 1. The input gap is 1; 2. either there is only 1 input ciphertext, or the
+# dimensions have been padded to PO2.
+class LogSum(Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.set_depth(0)
+        self.dim = dim
+        self.triple = [0, 0, 0]
+        self.in_stride, self.out_stride, self.group = 0, 0, 0
+        self.slots = 0
+
+    def prepare_params(self, shape):
+        self.slots = self.scheme.params.get_slots()
+        self.triple[0] = math.prod(shape[self.dim+1:])
+        self.triple[1] = shape[self.dim]
+        self.triple[2] = math.prod(shape[:self.dim])
+        
+        if self.triple[0] >= self.slots:
+            self.in_stride, self.out_stride, self.group = \
+                self.slots, math.ceil(self.triple[0] / self.slots), self.triple[2]
+        elif self.triple[0] * self.triple[1] >= self.slots or self.triple[2] == 1:
+            self.in_stride, self.out_stride, self.group = \
+                self.triple[0], 1, self.triple[2]
+        else:
+            raise(ValueError, "The layout of the ciphertext does not allow \
+                trivial summation. Please call permutation first. You can \
+                always move dim to 0 to solve this problem.")
+        
+        return self.in_stride, self.out_stride, self.group
+
+    def compute_fhe_output_shape(self, **kwargs):
+        fhe_input_shape = kwargs["fhe_input_shape"]
+        self.prepare_params(list(fhe_input_shape))
+
+        if isinstance(fhe_input_shape, list):
+            return fhe_input_shape[0]
+        return fhe_input_shape
+
+    def forward(self, x):
+        if self.he_mode:
+            x_sum = x.summation(self.out_stride, self.group)
+            s = self.in_stride
+            while s < self.slots:
+                x_sum += x_sum.roll(s, in_place=False)
+                s *= 2
+            x_sum = x_sum.broadcast(len(x) // len(x_sum))
+            return x_sum
+        else:
+            return torch.sum(x, self.dim)
 
 
 # With permutation implemented, we can concatenate along any dim.

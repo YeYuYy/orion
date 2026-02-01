@@ -3,6 +3,7 @@ import torch.fx as fx
 import networkx as nx
 import matplotlib.pyplot as plt
 import operator
+from collections import deque
 
 from orion.nn.normalization import BatchNormNd
 
@@ -258,6 +259,31 @@ class NetworkDAG(nx.DiGraph):
     
     def topological_sort(self):
         return nx.topological_sort(self)
+    
+    def is_serial_parallel(self):
+        dag = nx.DiGraph()
+        dag.add_nodes_from(self.nodes())
+        dag.add_edges_from(self.edges())
+        candidates = deque([n for n in dag.nodes() 
+                            if dag.in_degree(n) == 1 and dag.out_degree(n) == 1])
+        in_queue = set(candidates)
+        
+        while candidates:
+            v = candidates.popleft()
+            if v not in dag:
+                continue
+            u = next(dag.predecessors(v))
+            w = next(dag.successors(v))
+            dag.remove_node(v)
+            dag.add_edge(u, w)
+            if dag.in_degree(u) == 1 and dag.out_degree(u) == 1 and u not in in_queue:
+                candidates.append(u)
+                in_queue.add(u)
+            if dag.in_degree(w) == 1 and dag.out_degree(w) == 1 and w not in in_queue:
+                candidates.append(w)
+                in_queue.add(w)
+
+        return dag.number_of_nodes() <= 2
     
     def plot(self, figsize=(15, 7.5), save_path=None):
         """Visualize the DAG with color-coded node types"""

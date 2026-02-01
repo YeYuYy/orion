@@ -1,15 +1,16 @@
 import math
 import networkx as nx
 import matplotlib.pyplot as plt
-
+import numpy as np
 from .level_dag import LevelDAG
 from orion.nn.operations import Bootstrap
 
 
 class BootstrapSolver:
-    def __init__(self, net, network_dag, l_eff):
+    def __init__(self, net, network_dag, complete_dag, l_eff):
         self.net = net 
         self.network_dag = network_dag 
+        self.complete_dag = complete_dag
         self.l_eff = l_eff
         self.full_level_dag = LevelDAG(l_eff, network_dag)
 
@@ -161,6 +162,9 @@ class BootstrapSolver:
         input_level = self.finally_solve_full_level_dag()
 
         self.assign_levels_to_layers()
+        if self.complete_dag is not None:
+            self.assign_levels_to_deleted_nodes()
+            self.network_dag = self.complete_dag
         num_bootstraps, bootstrapper_slots = self.mark_bootstrap_locations()
 
         return input_level, num_bootstraps, bootstrapper_slots
@@ -176,10 +180,37 @@ class BootstrapSolver:
                 level = int(layer.split("=")[-1])
                 
                 if node == name:
-                    self.network_dag.nodes[node]["level"] = level
-                    if node_module:
-                        node_module.level = level
+                    if self.complete_dag is not None:
+                        # If we had to canonicalize the graph, we need to complete the level assignments
+                        # for the original complete DAG. Therefore, we directly assign levels to it.
+                        self.complete_dag.nodes[node]["level"] = level
+                        if self.complete_dag.nodes[node]["module"]:
+                            self.complete_dag.nodes[node]["module"].level = level
+                    else:
+                        self.network_dag.nodes[node]["level"] = level
+                        if node_module:
+                            node_module.level = level
                 continue
+
+    def assign_levels_to_deleted_nodes(self):
+        # During canonicalization, some nodes may have been deleted from the
+        # original network DAG. We need to make sure these nodes also have
+        # their levels assigned correctly.
+        for node in nx.topological_sort(self.complete_dag):
+            if node not in self.network_dag.nodes:
+                min_in_level = np.inf
+                for pred in self.complete_dag.predecessors(node):
+                    in_level = self.complete_dag.nodes[pred]["level"] - self.complete_dag.nodes[pred]["depth"]
+                    if in_level < min_in_level:
+                        min_in_level = in_level
+                if min_in_level > self.complete_dag.nodes[node]["depth"]:
+                    assigned_level = min_in_level
+                else:
+                    assigned_level = self.complete_dag.nodes[node]["depth"] + 1
+                self.complete_dag.nodes[node]["level"] = assigned_level
+                if self.complete_dag.nodes[node]["module"]:
+                    self.complete_dag.nodes[node]["module"].level = assigned_level
+                self.shortest_path.add(f"{node}@l={assigned_level}")
 
     def mark_bootstrap_locations(self):
         # Makes things a bit easier below
@@ -199,12 +230,34 @@ class BootstrapSolver:
             node_w_level = node_map[node]
             
             children = self.network_dag.successors(node)
+            predecessors = self.network_dag.predecessors(node)
             self.network_dag.nodes[node]["bootstrap"] = False
             
             # Iterate over the layer's children to determine if their assigned
             # levels necessitate a bootstrap of the current layer.
             for child in children:
                 child_w_level = node_map[child]
+
+            # We need to manually check fork nodes because some bootstrappings
+            # might be placed there because of canonicalization.
+                if 'fork' in node:
+                    child_level = int(child_w_level.split("=")[-1])
+                    curr_level = int(node_w_level.split("=")[-1])
+                    if curr_level < child_level:
+                        curr = node
+                        while True:
+                            pred = next(self.network_dag.predecessors(curr))
+                            if self.network_dag.nodes[pred]['op'] == 'call_module':
+                                self.network_dag.nodes[pred]["bootstrap"] = True
+                                slots = self.get_bootstrap_slots(pred)
+                                if slots not in bootstrapper_slots:
+                                    bootstrapper_slots.append(slots)
+                                total_bootstraps += self.network_dag.nodes[pred]["in_ct_num"]
+                                break
+                            else:
+                                curr = pred
+                    continue
+
                 _, curr_boots = query.estimate_bootstrap_latency(
                     node_w_level, child_w_level)
                 
@@ -217,6 +270,28 @@ class BootstrapSolver:
                     if slots not in bootstrapper_slots:
                         bootstrapper_slots.append(slots)
                     break
+
+            # We need to manually check predecessors because canonicalization
+            # may have deleted some edges, so that some bootstrappings are placed
+            # to join nodes.
+            for pred in predecessors:
+                if 'join' in pred:
+                    pred_w_level = node_map[pred]
+                    pred_level = int(pred_w_level.split("=")[-1])
+                    curr_level = int(node_w_level.split("=")[-1])
+                    curr_boots = 0
+                    if curr_level > pred_level:
+                        curr_boots = self.network_dag.nodes[node]["in_ct_num"]
+                    
+                    total_bootstraps += curr_boots
+                    if curr_boots > 0:
+                        self.network_dag.nodes[node]["bootstrap"] = True
+                        slots = self.get_bootstrap_slots(node)
+                        
+                        # Add bootstrapper to generate
+                        if slots not in bootstrapper_slots:
+                            bootstrapper_slots.append(slots)
+                        break
 
         return total_bootstraps , bootstrapper_slots
     

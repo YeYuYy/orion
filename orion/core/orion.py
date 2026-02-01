@@ -26,6 +26,7 @@ from .tracer import OrionTracer, StatsTracker
 from .fuser import Fuser
 from .network_dag import NetworkDAG
 from .auto_bootstrap import BootstrapSolver, BootstrapPlacer
+from .dag_canonic import TTSPSolver
 from .logger import logger as ORION_LOGGER
 
 
@@ -246,19 +247,34 @@ class Scheme:
         #------------------------------#
 
         network_dag.find_residuals()
-        network_dag.plot(save_path="network.png", figsize=(8,30)) # optional plot
+        network_dag.plot(save_path="network.png", figsize=(20,40)) # optional plot
+
+        complete_dag = None
+        if not network_dag.is_serial_parallel():
+            print("\n{3.5} The network DAG is not serial-parallel. Running canonicalization...", flush=True)
+            start = time.time()
+            ttsp_solver = TTSPSolver(network_dag, self.params.get_slots(), len(self.params.get_logq()) - 1)
+            network_dag, complete_dag = ttsp_solver.solve_max_ttsp_subgraph()
+            print(f"done! [{time.time()-start:.3f} secs.]", flush=True)
+            print(f"├── Extracted TTSP subgraph with {len(network_dag.nodes)} nodes "
+                f"and {len(network_dag.edges)} edges.")
+            print(f"├── The original graph has {len(complete_dag.nodes)} nodes "
+                f"and {len(complete_dag.edges)} edges.")
+            network_dag.plot(save_path="network-canonicalized.png", figsize=(20,40)) # optional plot
 
         print("\n{4} Running bootstrap placement... ", end="", flush=True)
         start = time.time()
         l_eff = len(self.params.get_logq()) - 1
-        btp_solver = BootstrapSolver(net, network_dag, l_eff=l_eff)
+        btp_solver = BootstrapSolver(net, network_dag, complete_dag, l_eff=l_eff)
         input_level, num_bootstraps, bootstrapper_slots = btp_solver.solve()
+        if complete_dag is not None:
+            network_dag = complete_dag
         print(f"done! [{time.time()-start:.3f} secs.]", flush=True)
         print(f"├── Network requires {num_bootstraps} bootstrap "
             f"{'operation' if num_bootstraps == 1 else 'operations'}.")
 
         btp_solver.plot_shortest_path(
-           save_path="network-with-levels.png", figsize=(8,30) # optional plot
+           save_path="network-with-levels.png", figsize=(20,40) # optional plot
         )
 
         if bootstrapper_slots:
@@ -286,7 +302,7 @@ class Scheme:
             if isinstance(module, Module):
                 print(f"├── {node} @ level={module.level}", flush=True)
                 module.compile()
-                
+
         return input_level # level at which to encrypt the input.
 
     def _check_initialization(self):

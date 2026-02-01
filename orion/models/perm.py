@@ -19,15 +19,15 @@ class TestPermutation(on.Module):
 class TestCatPerm(on.Module):
     def __init__(self):
         super(TestCatPerm, self).__init__()
-        self.conv0 = on.Conv2d(16, 4, kernel_size=3, padding=1, stride=2)
-        self.conv1 = on.Conv2d(16, 4, kernel_size=3, padding=1, stride=2)
+        # self.conv0 = on.Conv2d(16, 4, kernel_size=3, padding=1, stride=2)
+        # self.conv1 = on.Conv2d(16, 4, kernel_size=3, padding=1, stride=2)
         self.perm0 = on.Permutation([0, 3, 2, 1], target_gap=1)
         self.cat = on.Cat()
 
     def forward(self, x):
-        x0 = self.conv0(x)
-        x1 = self.conv1(x)
-        y = self.cat([self.perm0(x0), self.perm0(x1)], dim=1)
+        # x0 = self.conv0(x)
+        # x1 = self.conv1(x)
+        y = self.cat([self.perm0(x), self.perm0(x)], dim=1)
         return y
     
 

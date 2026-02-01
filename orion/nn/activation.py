@@ -6,8 +6,8 @@ import torch.nn.functional as F
 import numpy as np
 
 from orion.nn.module import Module, timer
-from orion.nn.operations import Mult
-
+from orion.nn.operations import Mult, LogSum
+from orion.backend.python.tensors import new_ciphertext, new_plaintext
 
 class Activation(Module):
     def __init__(self, coeffs):
@@ -285,6 +285,80 @@ class ReLU(Module):
         x = self.mult1(x, self.prescale)
         x = self.mult2(x, self.sign(x))
         x *= self.postscale # integer mult, no level consumed
+        return x
+
+
+class Invert(Module):
+    def __init__(self, iter=10):
+        super().__init__()
+        self.iter = iter
+        self.quad = nn.ModuleList([Quad() for _ in range(iter)])
+        self.mult = nn.ModuleList([Mult() for _ in range(iter)])
+
+    def forward(self, x):
+        if self.he_mode:
+            self.one = new_ciphertext(1, self.scheme)
+        else:
+            self.one = 1
+        res = self.one - x
+        inv = res + 1
+        for i in range(self.iter):
+            res = self.quad[i](res)
+            tmp = res + 1
+            inv = self.mult[i](inv, tmp)
+
+        return inv
+
+# Normalizing the sum of a vector to 1.
+class _Norm(Module):
+    def __init__(self, dim=0):
+        super().__init__()
+        self.sum = LogSum(dim)
+        self.inv = Invert()
+        self.mult = Mult()
+
+    def forward(self, x):
+        s = self.sum(x)
+        s_inv = self.inv(s)
+        return self.mult(x, s_inv)
+    
+
+class Softmax(Module):
+    def __init__(self, dim=0, approx=128, temp=0):
+        super().__init__()
+        self.mult = Mult()
+        self.quad = nn.ModuleList(
+            [Quad() for _ in range(int(math.log2(approx) + temp))])
+        self.norm = _Norm(dim)
+
+    @timer
+    def forward(self, x):
+        x = self.mult(x, 1 / 128)
+        x += 1
+        for i in range(len(self.quad)):
+            self.quad[i](x)
+        return self.norm(x)
+
+
+# class _IndexSum(Module):
+#     def __init__(self, dim=0):
+#         super().__init__()
+#         self.sum = LogSum(dim)
+#         self.
+
+
+class Argmax(Module):
+    def __init__(self, dim=0):
+        super().__init__()        
+        self.softmax = Softmax(dim, temp=3)
+        self.norm = _Norm(dim)
+        # self.idxsum = _IndexSum(dim)
+
+    @timer
+    def forward(self, x):
+        x = self.softmax(x)
+        x = self.norm(x)
+        # return self.idxsum(x)
         return x
 
 
